@@ -3,6 +3,9 @@ import hashlib
 import os
 import secrets
 import sqlite3
+
+import psycopg
+from psycopg.rows import dict_row
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -13,7 +16,7 @@ from .services import analyze, copyright_check, next_review, now, ocr_image
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve()
-DATA.mkdir(exist_ok=True)
+DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "wrongbook.db"
 UPLOADS = DATA / "uploads"
 UPLOADS.mkdir(exist_ok=True)
@@ -26,9 +29,27 @@ def health():
     return {"status": "ok"}
 
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+# 云端优先 PostgreSQL；本地开发仍可以使用 SQLite。
+class PgConnection:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def execute(self, sql, params=None):
+        return self.conn.execute(sql.replace("?", "%s"), params or ())
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            if statement.strip():
+                self.conn.execute(statement)
+
 @contextmanager
 def db():
-    """每个请求独立连接；事务结束后关闭。"""
+    """每个请求独立连接；异常回滚，正常提交。"""
+    if DATABASE_URL:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=10) as connection:
+            yield PgConnection(connection)
+        return
     conn = sqlite3.connect(DB, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -42,7 +63,6 @@ def db():
     finally:
         conn.close()
 
-
 def password_hash(password, salt=None):
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 200_000).hex()
@@ -51,18 +71,39 @@ def password_hash(password, salt=None):
 
 def init():
     with db() as c:
-        # 演示环境多名同学并发读写时，WAL 可减少读写互相阻塞。
-        c.execute("PRAGMA journal_mode=WAL")
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user');
-        CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类', cause TEXT DEFAULT '', explanation TEXT DEFAULT '', variant TEXT DEFAULT '', answer TEXT DEFAULT '', mode TEXT DEFAULT '', level INTEGER DEFAULT 0, due TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'private', source TEXT DEFAULT '', review_note TEXT DEFAULT '', created TEXT NOT NULL);
-        """)
-        # 管理员由环境变量首次创建；无默认公开弱密码。
+        if DATABASE_URL:
+            # PostgreSQL 数据独立于 Render 的临时容器，重启/部署不会清空。
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS users(
+                id BIGSERIAL PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user'
+            );
+            CREATE TABLE IF NOT EXISTS sessions(
+                token TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), expires TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS questions(
+                id BIGSERIAL PRIMARY KEY, owner_id BIGINT NOT NULL REFERENCES users(id),
+                text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类',
+                cause TEXT DEFAULT '', explanation TEXT DEFAULT '', variant TEXT DEFAULT '',
+                answer TEXT DEFAULT '', mode TEXT DEFAULT '', level INTEGER DEFAULT 0,
+                due TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'private',
+                source TEXT DEFAULT '', review_note TEXT DEFAULT '', created TEXT NOT NULL
+            );
+            """)
+        else:
+            c.execute("PRAGMA journal_mode=WAL")
+            c.executescript("""
+            CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user');
+            CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类', cause TEXT DEFAULT '', explanation TEXT DEFAULT '', variant TEXT DEFAULT '', answer TEXT DEFAULT '', mode TEXT DEFAULT '', level INTEGER DEFAULT 0, due TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'private', source TEXT DEFAULT '', review_note TEXT DEFAULT '', created TEXT NOT NULL);
+            """)
         username, password = os.getenv("ADMIN_USER"), os.getenv("ADMIN_PASSWORD")
         if username and password and len(password) >= 8:
-            c.execute("INSERT OR IGNORE INTO users(username,password,role) VALUES(?,?,'admin')", (username, password_hash(password)))
-
+            hashed = password_hash(password)
+            if DATABASE_URL:
+                c.execute("INSERT INTO users(username,password,role) VALUES(?,?,'admin') ON CONFLICT (username) DO NOTHING", (username, hashed))
+            else:
+                c.execute("INSERT OR IGNORE INTO users(username,password,role) VALUES(?,?,'admin')", (username, hashed))
 
 init()
 
@@ -109,7 +150,7 @@ def register(body: Auth):
     try:
         with db() as c:
             c.execute("INSERT INTO users(username,password) VALUES(?,?)", (body.username, password_hash(body.password)))
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, psycopg.errors.UniqueViolation):
         raise HTTPException(409, "用户名已存在")
     return {"message": "注册成功"}
 
@@ -169,9 +210,10 @@ def create(body: Question, user=Depends(current)):
     except Exception as e:
         raise HTTPException(502, f"模型调用失败，请检查配置：{type(e).__name__}")
     with db() as c:
-        cursor = c.execute("INSERT INTO questions(owner_id,text,image,tag,cause,explanation,variant,answer,mode,due,source,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        insert_sql = "INSERT INTO questions(owner_id,text,image,tag,cause,explanation,variant,answer,mode,due,source,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)" + (" RETURNING id" if DATABASE_URL else "")
+        cursor = c.execute(insert_sql,
                            (user["id"], body.text, body.image, body.tag if body.tag != "待归类" else result["tag"], result["cause"], result["explanation"], result["variant"], result["answer"], result["mode"], now().isoformat(), body.source, now().isoformat()))
-        return {"id": cursor.lastrowid, **result}
+        return {"id": cursor.fetchone()["id"] if DATABASE_URL else cursor.lastrowid, **result}
 
 
 @app.get("/questions")
