@@ -44,10 +44,21 @@ def analyze(text):
     key, url, model = (os.getenv(k, "") for k in ("AI_API_KEY", "AI_BASE_URL", "AI_MODEL"))
     if key and url and model:
         # 限制输入、输出长度；不记录密钥和题目全文。
-        prompt = "请分析这道错题。只返回JSON对象，字段tag,cause,explanation,variant,answer；每字段不超过90字。题目：" + text[:1200]
-        payload = {"model": model, "temperature": 0.2, "max_tokens": 300,
+        prompt = (
+            "你是大学课程错题辅导老师。请严谨解题、检查计算和最终答案。"
+            "仅输出一个合法JSON对象，恰好包含五个字符串字段："
+            "tag(知识点，10字内)、cause(可能错因，无法判断时写'需学生自述错因')、"
+            "explanation(分步骤解析，120字内)、variant(同知识点新题，70字内)、"
+            "answer(新题正确答案和简要过程，70字内)。不要Markdown。"
+            "题目：" + text[:1200]
+        )
+        # 不启用深度思考，控制输入和输出量；密钥只在服务端使用。
+        payload = {"model": model, "max_tokens": 550,
+                   "thinking": {"type": "disabled"},
                    "messages": [{"role": "user", "content": prompt}]}
-        endpoint = url.rstrip("/") + ("/chat/completions" if url.rstrip("/").endswith("/v1") else "/v1/chat/completions")
+        # 火山方舟正式数据面基址为 .../api/v3；同时兼容完整URL和旧版/v1。
+        base = url.rstrip("/")
+        endpoint = base if base.endswith("/chat/completions") else base + "/chat/completions"
         request = Request(endpoint, data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
         with urlopen(request, timeout=25) as resp:
@@ -56,6 +67,6 @@ def analyze(text):
         result = json.loads(content)
         if not isinstance(result, dict) or not all(k in result and isinstance(result[k], str) for k in ("tag", "cause", "explanation", "variant", "answer")):
             raise ValueError("模型返回格式不符合要求")
-        return {k: result[k][:300] for k in ("tag", "cause", "explanation", "variant", "answer")} | {"mode": "真实模型"}
+        return {k: result[k][:300] for k in ("tag", "cause", "explanation", "variant", "answer")} | {"mode": "豆包真实模型分析"}
     return {"tag": "待归类", "cause": "需自行核对错因", "explanation": "演示模式未接入大模型，请根据教材或课堂笔记手动完善解析。",
             "variant": "请尝试替换原题中的数字或条件，并重新求解。", "answer": "请自行核对答案。", "mode": "本地模拟（非AI分析）"}
