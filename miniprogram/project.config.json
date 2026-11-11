@@ -1,0 +1,14 @@
+{
+  "description": "拾题微信小程序课堂体验版",
+  "appid": "touristappid",
+  "projectname": "shiti-wrongbook",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": true
+  }
+}

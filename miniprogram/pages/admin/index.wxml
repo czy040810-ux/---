@@ -1,0 +1,13 @@
+<view class="page">
+  <view class="brand">内容审核</view><view class="sub">自动初审通过后，仍须人工核查来源和授权。</view>
+  <view wx:if="{{items.length===0}}" class="card muted">暂无待审核投稿。</view>
+  <view wx:for="{{items}}" wx:key="id" class="card">
+    <view class="row"><view class="chip">{{item.tag}}</view><view class="muted small">#{{item.id}}</view></view>
+    <view class="question" style="margin-top:18rpx">{{item.text}}</view>
+    <view class="divider"></view><view class="muted">来源：{{item.source}}</view>
+    <view class="muted">初审：{{item.review_note}}</view>
+    <input class="field" placeholder="人工审核备注" maxlength="200" data-id="{{item.id}}" bindinput="setNote" />
+    <button class="button" data-id="{{item.id}}" data-approved="{{true}}" bindtap="decide">审核通过</button>
+    <button class="button danger" data-id="{{item.id}}" data-approved="{{false}}" bindtap="decide">驳回</button>
+  </view>
+</view>

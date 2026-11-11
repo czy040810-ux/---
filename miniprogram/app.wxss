@@ -1,0 +1,19 @@
+/* 浅海蓝视觉；适配常见手机宽度和微信安全区域。 */
+page { background:#f4f8fc; color:#18364b; font-size:30rpx; }
+.page { padding:32rpx 28rpx 52rpx; }
+.brand { font-size:52rpx; font-weight:800; color:#116d96; }
+.sub { color:#72889b; font-size:25rpx; margin-top:8rpx; }
+.card { margin-top:26rpx; padding:28rpx; background:#fff; border-radius:22rpx; box-shadow:0 6rpx 22rpx rgba(21,74,105,.05); }
+.title { font-size:36rpx; font-weight:700; margin-bottom:16rpx; }
+.muted { color:#6d8290; font-size:26rpx; line-height:1.6; }
+.field { display:block; padding:21rpx 18rpx; margin:18rpx 0; background:#f4f8fc; border-radius:12rpx; min-height:42rpx; }
+.area { width:100%; min-height:220rpx; box-sizing:border-box; }
+.button { border-radius:14rpx; margin-top:18rpx; background:#11739f; color:white; font-size:29rpx; }
+.button::after { border:none; }
+.ghost { background:#eaf4fa; color:#126d95; }
+.danger { background:#fff0ef; color:#b94739; }
+.row { display:flex; align-items:center; justify-content:space-between; gap:20rpx; }
+.chip { background:#eaf5fb; color:#116f99; border-radius:100rpx; font-size:23rpx; padding:8rpx 18rpx; display:inline-block; }
+.divider { height:1rpx; background:#e9eef3; margin:20rpx 0; }
+.question { line-height:1.7; white-space:pre-wrap; word-break:break-word; }
+.small { font-size:24rpx; }

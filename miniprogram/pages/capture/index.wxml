@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="brand">拍一拍，记住它</view><view class="sub">支持拍照和相册，识别后可以手动修正。</view>
+  <view class="card">
+    <button class="button" bindtap="choose" loading="{{busy}}">📷 拍照 / 选择图片</button>
+    <image wx:if="{{imagePath}}" src="{{imagePath}}" mode="widthFix" style="width:100%;border-radius:16rpx;margin-top:20rpx" />
+    <view class="muted" style="margin-top:20rpx">题目文字</view>
+    <textarea class="field area" value="{{text}}" maxlength="5000" placeholder="OCR结果会出现在这里，也可直接输入错题" bindinput="setText" />
+    <view class="muted">知识点标签</view>
+    <input class="field" value="{{tag}}" maxlength="50" bindinput="setTag" placeholder="例如：一元一次方程" />
+    <view class="muted">内容来源声明</view>
+    <input class="field" value="{{source}}" maxlength="150" bindinput="setSource" />
+    <button class="button" bindtap="save" loading="{{busy}}">保存并分析错题</button>
+  </view>
+  <view wx:if="{{result}}" class="card">
+    <view class="title">分析结果</view><view class="chip">{{result.mode}}</view>
+    <view class="divider"></view>
+    <view class="muted">知识点</view><view class="question">{{result.tag}}</view>
+    <view class="muted">错误原因</view><view class="question">{{result.cause}}</view>
+    <view class="muted">题目解析</view><view class="question">{{result.explanation}}</view>
+    <view class="muted">变式训练</view><view class="question">{{result.variant}}</view>
+    <view class="muted">参考答案</view><view class="question">{{result.answer}}</view>
+  </view>
+  <view class="card muted">只上传自己整理的错题或手写笔记。公开前还需要管理员审核。</view>
+</view>

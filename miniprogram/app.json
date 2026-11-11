@@ -1,0 +1,30 @@
+{
+  "pages": [
+    "pages/home/index",
+    "pages/capture/index",
+    "pages/book/index",
+    "pages/library/index",
+    "pages/login/index",
+    "pages/detail/index",
+    "pages/admin/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "拾题",
+    "navigationBarBackgroundColor": "#eef7fc",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f9fc"
+  },
+  "tabBar": {
+    "color": "#658094",
+    "selectedColor": "#126e96",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {"pagePath":"pages/home/index","text":"首页"},
+      {"pagePath":"pages/capture/index","text":"拍题"},
+      {"pagePath":"pages/book/index","text":"错题本"},
+      {"pagePath":"pages/library/index","text":"共建题库"}
+    ]
+  },
+  "sitemapLocation":"sitemap.json",
+  "style":"v2"
+}

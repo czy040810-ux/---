@@ -1,0 +1,22 @@
+<view class="page" wx:if="{{item}}">
+  <view class="brand">错题解析</view>
+  <view class="card"><view class="chip">{{item.tag}}</view><view class="question" style="margin-top:18rpx">{{item.text}}</view>
+    <view class="divider"></view><view class="muted">分析方式：{{item.mode}}</view>
+    <view class="muted">错因</view><view class="question">{{item.cause}}</view>
+    <view class="muted">解析</view><view class="question">{{item.explanation}}</view>
+    <view class="muted">同知识点变式题</view><view class="question">{{item.variant}}</view>
+    <button class="button ghost" bindtap="showAnswer">{{answerVisible?'隐藏参考答案':'点击查看参考答案'}}</button>
+    <view wx:if="{{answerVisible}}" class="question">{{item.answer}}</view>
+  </view>
+  <view class="card"><view class="title">复习反馈</view><view class="muted">下次计划：{{item.dueLabel}}</view>
+    <button class="button" data-yes="{{true}}" loading="{{busy}}" bindtap="review">这次记住了</button>
+    <button class="button ghost" data-yes="{{false}}" loading="{{busy}}" bindtap="review">还没记住</button>
+  </view>
+  <view class="card"><view class="title">标签与公开投稿</view>
+    <input class="field" value="{{tag}}" bindinput="setTag" maxlength="50" />
+    <button class="button ghost" bindtap="editTag">修改知识点标签</button>
+    <view class="muted" style="margin-top:16rpx">投稿状态：{{item.status}}</view>
+    <view wx:if="{{item.review_note}}" class="muted">{{item.review_note}}</view>
+    <button wx:if="{{item.status==='private'||item.status==='rejected'}}" class="button" bindtap="submit">申请加入公开共建题库</button>
+  </view>
+</view>

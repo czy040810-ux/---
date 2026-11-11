@@ -1,0 +1,11 @@
+<view class="page">
+  <view class="brand">拾题</view><view class="sub">把错题变成会复习的知识</view>
+  <view class="card">
+    <view class="title">{{mode==='login'?'欢迎回来':'创建学习账号'}}</view>
+    <input class="field" placeholder="用户名（至少2位）" value="{{username}}" bindinput="setUser" maxlength="30" />
+    <input class="field" placeholder="密码（至少8位）" password value="{{password}}" bindinput="setPassword" maxlength="100" />
+    <button class="button" loading="{{busy}}" bindtap="submit">{{mode==='login'?'登录':'注册'}}</button>
+    <button class="button ghost" data-mode="{{mode==='login'?'register':'login'}}" bindtap="setMode">{{mode==='login'?'没有账号？立即注册':'已有账号？返回登录'}}</button>
+  </view>
+  <view class="card muted">课堂体验版 · 请使用专用测试密码，不要上传整本教材、付费教辅原题或隐私资料。</view>
+</view>

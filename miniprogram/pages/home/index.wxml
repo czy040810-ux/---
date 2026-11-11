@@ -1,0 +1,13 @@
+<view class="page">
+  <view class="brand">拾题 📘</view><view class="sub">今天也把不会的，变成会的。</view>
+  <view class="card"><view class="title">我的学习概览</view>
+    <view class="row"><view><view class="brand">{{due}}</view><view class="muted">今日待复习</view></view><view><view class="brand">{{count}}</view><view class="muted">累计错题</view></view><view><view class="brand">{{tags}}</view><view class="muted">知识点</view></view></view>
+  </view>
+  <view class="card"><view class="title">开始学习</view>
+    <button class="button" bindtap="capture">＋ 拍照录入新错题</button>
+    <button class="button ghost" bindtap="review">查看错题与复习计划</button>
+  </view>
+  <view class="card"><view class="title">学习方式</view><view class="muted">上传自己整理的错题 → 修正文字 → 分析知识点 → 根据记忆情况安排下一次复习。</view></view>
+  <view wx:if="{{role==='admin'}}" class="card"><button class="button" bindtap="admin">管理员审核入口</button></view>
+  <button class="button ghost" bindtap="logout">退出当前账号</button>
+</view>
