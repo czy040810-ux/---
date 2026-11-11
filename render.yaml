@@ -1,0 +1,24 @@
+# Render Blueprint：免费 Web Service，无持久磁盘。
+services:
+  - type: web
+    name: shiti-classroom-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: DATA_DIR
+        value: /app/data
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        sync: false
+      - key: AI_MODEL
+        sync: false

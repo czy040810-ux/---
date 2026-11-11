@@ -1,0 +1,28 @@
+services:
+  shiti:
+    build: .
+    image: shiti-wrongbook:demo
+    restart: unless-stopped
+    ports:
+      - "8501:10000"
+    environment:
+      PORT: "10000"
+      DATA_DIR: /app/data
+      OCR_LANG: chi_sim+eng
+      ADMIN_USER: ${ADMIN_USER:?请在.env中配置管理员用户名}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在.env中设置至少8位密码}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+    volumes:
+      # 本地 Docker Compose 具备持久化；Render 免费服务不会使用此挂载。
+      - shiti_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  shiti_data:

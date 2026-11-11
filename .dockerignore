@@ -1,0 +1,13 @@
+.venv
+.git
+.pytest_cache
+__pycache__
+*.pyc
+data
+.env
+*.zip
+tests
+miniprogram
+README.md
+render.yaml
+docker-compose.yml
