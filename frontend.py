@@ -100,7 +100,7 @@ if page == "拍照录题":
             if result:
                 st.success("保存成功")
                 st.info("分析方式：" + result["mode"])
-                st.write("知识点：", result["tag"], "\n\n错因：", result["cause"])
+                st.write("知识点：", tag if tag.strip() and tag != "待归类" else result["tag"], "\n\n错因：", result["cause"])
                 st.write("解析：", result["explanation"])
                 st.write("变式题：", result["variant"], "\n\n参考答案：", result["answer"])
                 st.session_state.pop("ocr_text", None)
@@ -169,7 +169,7 @@ elif page == "管理员审核":
 
 elif page == "扫码访问":
     st.subheader("用手机扫码体验")
-    st.write("电脑和手机需连接同一个 Wi-Fi；电脑防火墙需允许 TCP 8501 端口。")
+    st.write("公网部署后，手机使用微信或其他浏览器扫码即可访问，无需连接同一 Wi-Fi。")
     public_file = Path(__file__).resolve().parent / "data" / "public_url.txt"
     address = public_file.read_text(encoding="utf-8").strip() if public_file.exists() else (os.getenv("RENDER_EXTERNAL_URL") or os.getenv("DEMO_URL", ""))
     if public_file.exists():
