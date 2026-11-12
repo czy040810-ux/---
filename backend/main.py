@@ -7,6 +7,7 @@ import sqlite3
 import psycopg
 from psycopg.rows import dict_row
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
@@ -81,6 +82,10 @@ def init():
             CREATE TABLE IF NOT EXISTS sessions(
                 token TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id), expires TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS remembered_devices(
+                token_hash TEXT PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES users(id),
+                expires TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS questions(
                 id BIGSERIAL PRIMARY KEY, owner_id BIGINT NOT NULL REFERENCES users(id),
                 text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类',
@@ -95,6 +100,7 @@ def init():
             c.executescript("""
             CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user');
             CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS remembered_devices(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类', cause TEXT DEFAULT '', explanation TEXT DEFAULT '', variant TEXT DEFAULT '', answer TEXT DEFAULT '', mode TEXT DEFAULT '', level INTEGER DEFAULT 0, due TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'private', source TEXT DEFAULT '', review_note TEXT DEFAULT '', created TEXT NOT NULL);
             """)
         username, password = os.getenv("ADMIN_USER"), os.getenv("ADMIN_PASSWORD")
@@ -111,6 +117,18 @@ init()
 class Auth(BaseModel):
     username: str = Field(min_length=2, max_length=30, pattern=r"^[\w\u4e00-\u9fff]+$")
     password: str = Field(min_length=8, max_length=100)
+
+
+class LogoutBody(BaseModel):
+    remember_token: str = Field(default="", max_length=256)
+
+
+class RestoreSession(BaseModel):
+    remember_token: str = Field(min_length=30, max_length=256)
+
+
+class LoginBody(Auth):
+    remember_device: bool = False
 
 
 class Question(BaseModel):
@@ -155,24 +173,52 @@ def register(body: Auth):
     return {"message": "注册成功"}
 
 
+def new_session(c, user_id):
+    token = secrets.token_urlsafe(32)
+    c.execute("INSERT INTO sessions VALUES(?,?,?)", (token, user_id, (now() + timedelta(hours=8)).isoformat()))
+    return token
+
+
+def remember_hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 @app.post("/login")
-def login(body: Auth):
+def login(body: LoginBody):
     with db() as c:
         user = c.execute("SELECT * FROM users WHERE username=?", (body.username,)).fetchone()
         if not user or not secrets.compare_digest(password_hash(body.password, user["password"].split("$")[0]), user["password"]):
             raise HTTPException(401, "用户名或密码错误")
-        token = secrets.token_urlsafe(32)
-        from datetime import timedelta
-        c.execute("INSERT INTO sessions VALUES(?,?,?)", (token, user["id"], (now() + timedelta(hours=8)).isoformat()))
-    return {"token": token, "role": user["role"]}
+        token = new_session(c, user["id"])
+        result = {"token": token, "role": user["role"]}
+        if body.remember_device:
+            remember_token = secrets.token_urlsafe(48)
+            c.execute("INSERT INTO remembered_devices(token_hash,user_id,expires) VALUES(?,?,?)",
+                      (remember_hash(remember_token), user["id"], (now() + timedelta(days=14)).isoformat()))
+            result["remember_token"] = remember_token
+    return result
+
+
+@app.post("/session/restore")
+def restore_session(body: RestoreSession):
+    with db() as c:
+        # 服务端只储存哈希；浏览器凭证泄漏时仍可通过登出进行撤销。
+        row = c.execute("SELECT u.* FROM remembered_devices d JOIN users u ON u.id=d.user_id "
+                        "WHERE d.token_hash=? AND d.expires>?",
+                        (remember_hash(body.remember_token), now().isoformat())).fetchone()
+        if not row:
+            raise HTTPException(401, "登录状态已过期，请重新登录")
+        return {"token": new_session(c, row["id"]), "role": row["role"]}
 
 
 @app.post("/logout")
-def logout(user=Depends(current), authorization: str = Header(default="")):
+def logout(body: LogoutBody | None = None, user=Depends(current), authorization: str = Header(default="")):
     with db() as c:
         c.execute("DELETE FROM sessions WHERE token=? AND user_id=?", (authorization.removeprefix("Bearer ").strip(), user["id"]))
+        if body and body.remember_token:
+            c.execute("DELETE FROM remembered_devices WHERE token_hash=? AND user_id=?",
+                      (remember_hash(body.remember_token), user["id"]))
     return {"message": "已退出"}
-
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...), user=Depends(current)):
