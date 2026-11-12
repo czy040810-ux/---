@@ -86,6 +86,12 @@ def extract_candidates(files: list[tuple[str, bytes]]) -> tuple[list[dict], list
                 sources = [(f"{name} · {page}", content) for page, content in _pdf_pages(payload)]
             elif suffix == "docx":
                 sources = [(name, _docx_text(payload))]
+            elif suffix in ("txt", "md"):
+                try:
+                    decoded = payload.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    decoded = payload.decode("gb18030")
+                sources = [(name, decoded)]
             elif suffix in ("jpg", "jpeg", "png"):
                 with Image.open(BytesIO(payload)) as image:
                     sources = [(name, _ocr(image))]
