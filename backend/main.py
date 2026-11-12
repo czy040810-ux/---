@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from .services import analyze, copyright_check, next_review, now, ocr_image
+from .services import ModelAPIError, analyze, copyright_check, next_review, now, ocr_image
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve()
@@ -207,6 +207,8 @@ def create(body: Question, user=Depends(current)):
         raise HTTPException(400, "图片标识无效")
     try:
         result = analyze(body.text)
+    except ModelAPIError as e:
+        raise HTTPException(502, str(e))
     except Exception as e:
         raise HTTPException(502, f"模型调用失败，请检查配置：{type(e).__name__}")
     with db() as c:
