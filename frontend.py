@@ -162,7 +162,7 @@ if "token" not in st.session_state:
 with st.sidebar:
     st.markdown("### 📘 拾题空间")
     st.caption("错题积累 · 智能解析 · 复习巩固")
-    page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
+    page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "学习通导入", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
     if st.button("退出登录"):
         remember = cookie_controller.get(COOKIE_NAME)
         call("POST", "/logout", json={"remember_token": remember or ""})
@@ -235,56 +235,67 @@ elif page == "拍照录题":
                 st.session_state.pop("image", None)
 
 
-elif page == "批量导入":
+elif page in ("批量导入", "学习通导入"):
+    from_xxt = page == "学习通导入"
     st.markdown("""<div class="sea-hero"><div class="eyebrow">BATCH QUESTION IMPORT</div>
     <h2>一批录入，逐题掌握</h2>
     <p>上传 PDF、Word 或多张题目照片，先检查识别结果，再统一分析并加入复习计划。</p></div>""", unsafe_allow_html=True)
+    if from_xxt:
+        st.markdown("### 从学习通整理到拾题")
+        st.write("在学习通已批阅的作业、考试或个人错题页面，保存可以查看的试卷文件、截图，或复制题目文字，再在下方导入。是否能下载答卷取决于课程权限。")
+        st.info("本入口不连接学习通账号，不抓取未授权的题目。可上传学习通导出的 Word、PDF、TXT、Markdown 或错题截图；请仅勾选实际做错的题。")
     st.subheader("① 上传学习资料")
-    st.caption("支持 PDF（含扫描件，最多15页）、Word .docx、PNG/JPG；一次最多10个文件，每个不超过12MB。旧版 .doc 请先另存为 .docx。")
+    st.caption("支持 PDF（含扫描件，最多15页）、Word .docx、TXT、Markdown、PNG/JPG；一次最多10个文件，每个不超过12MB。旧版 .doc 请先另存为 .docx。")
     batch_files = st.file_uploader(
         "拖入文件或点击选择（支持多选）",
-        type=["pdf", "docx", "png", "jpg", "jpeg"],
+        type=["pdf", "docx", "txt", "md", "png", "jpg", "jpeg"],
         accept_multiple_files=True,
-        key="batch_files",
+        key=f"batch_files_{page}",
     )
+    pasted_questions = st.text_area("或直接粘贴题目文字（适合学习通页面复制）",
+                                     height=120, key=f"batch_paste_{page}")
+    input_files = [(f.name, f.getvalue()) for f in (batch_files or [])]
+    if pasted_questions.strip():
+        input_files.append(("学习通粘贴.txt" if from_xxt else "粘贴的题目.txt",
+                            pasted_questions.encode("utf-8")))
     if st.button("提取并拆分题目", type="primary", use_container_width=True,
-                 disabled=not bool(batch_files)):
-        if len(batch_files) > MAX_FILES:
+                 disabled=not bool(input_files), key=f"extract_{page}"):
+        if len(input_files) > MAX_FILES:
             st.error(f"一次最多选择 {MAX_FILES} 个文件。")
         else:
             with st.spinner("正在识别资料，扫描件和图片可能需要稍等片刻……"):
-                entries, warnings = extract_candidates([(f.name, f.getvalue()) for f in batch_files])
-            st.session_state.batch_entries = entries
-            st.session_state.batch_warnings = warnings
-            st.session_state.batch_saved_indices = set()
+                entries, warnings = extract_candidates(input_files)
+            st.session_state[f"batch_entries_{page}"] = entries
+            st.session_state[f"batch_warnings_{page}"] = warnings
+            st.session_state[f"batch_saved_indices_{page}"] = set()
             # 使用新的预览版本号避免上一次文件的文本残留。
-            st.session_state.batch_version = st.session_state.get("batch_version", 0) + 1
-    for warning in st.session_state.get("batch_warnings", []):
+            st.session_state[f"batch_version_{page}"] = st.session_state.get(f"batch_version_{page}", 0) + 1
+    for warning in st.session_state.get(f"batch_warnings_{page}", []):
         st.warning(warning)
 
-    entries = st.session_state.get("batch_entries", [])
+    entries = st.session_state.get(f"batch_entries_{page}", [])
     if entries:
         st.subheader("② 校对并选择错题")
         st.info(f"已提取 {len(entries)} 个候选题。请逐题检查文字与题目边界；未编号的内容可能被识别为一整题。每次最多分析 8 题。")
-        version = st.session_state.get("batch_version", 0)
-        saved_indices = st.session_state.get("batch_saved_indices", set())
-        with st.form(f"batch_review_{version}"):
+        version = st.session_state.get(f"batch_version_{page}", 0)
+        saved_indices = st.session_state.get(f"batch_saved_indices_{page}", set())
+        with st.form(f"batch_review_{page}_{version}"):
             common_tag = st.text_input("本批知识点（可留“待归类”，由模型识别）", value="待归类")
             for index, entry in enumerate(entries):
                 with st.expander(f"{'✅ 已导入' if index in saved_indices else '📝 待导入'} · {index + 1}. {entry['source']} · {entry['text'][:30]}", expanded=index < 3):
                     st.checkbox("选择此题", value=index not in saved_indices,
-                                disabled=index in saved_indices, key=f"batch_select_{version}_{index}")
+                                disabled=index in saved_indices, key=f"batch_select_{page}_{version}_{index}")
                     st.text_area("核对或修改题干（包含选项）", value=entry["text"],
                                  height=150, disabled=index in saved_indices,
-                                 key=f"batch_question_{version}_{index}")
+                                 key=f"batch_question_{page}_{version}_{index}")
                     st.caption("来源：" + entry["source"])
             submitted = st.form_submit_button("导入选中错题并进行豆包分析", type="primary",
                                                use_container_width=True)
         if submitted:
             chosen = [
-                (index, st.session_state[f"batch_question_{version}_{index}"].strip())
+                (index, st.session_state[f"batch_question_{page}_{version}_{index}"].strip())
                 for index in range(len(entries))
-                if index not in saved_indices and st.session_state.get(f"batch_select_{version}_{index}", False)
+                if index not in saved_indices and st.session_state.get(f"batch_select_{page}_{version}_{index}", False)
             ]
             if not chosen:
                 st.warning("请先选择尚未导入的题目。")
@@ -307,7 +318,7 @@ elif page == "批量导入":
                             result = call("POST", "/questions", json={
                                 "text": question_text,
                                 "tag": common_tag.strip() or "待归类",
-                                "source": "批量导入 · " + entries[index]["source"],
+                                "source": ("学习通导入 · " if from_xxt else "批量导入 · ") + entries[index]["source"],
                                 "image": "",
                             })
                             if result:
@@ -317,7 +328,7 @@ elif page == "批量导入":
                             else:
                                 failed += 1
                         progress.progress(position / len(chosen), text=f"已处理 {position}/{len(chosen)} 题")
-                    st.session_state.batch_saved_indices = saved_indices
+                    st.session_state[f"batch_saved_indices_{page}"] = saved_indices
                     if succeeded:
                         st.success(f"成功导入并分析 {succeeded} 题，已加入“我的错题”和复习计划。")
                     if duplicate:
