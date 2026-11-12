@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 
 def now():
@@ -39,6 +40,31 @@ def ocr_image(data):
     return pytesseract.image_to_string(image, lang=os.getenv("OCR_LANG", "chi_sim+eng")).strip()
 
 
+class ModelAPIError(Exception):
+    """对用户提供不含密钥、连接地址和题目内容的模型错误说明。"""
+
+
+def explain_model_http_error(exc):
+    status = exc.code
+    code = ""
+    try:
+        payload = json.loads(exc.read(2048).decode("utf-8", errors="replace"))
+        code = str(payload.get("error", {}).get("code", ""))[:100]
+    except (ValueError, AttributeError, TypeError):
+        pass
+    if status == 401:
+        return "豆包接口认证失败（401）：请检查 AI_API_KEY 是否为火山方舟 API Key。"
+    if status == 403:
+        return "豆包接口拒绝访问（403）：请检查 API Key 权限、账号余额与模型开通状态。"
+    if status == 404:
+        return "豆包模型不可访问（404）：请在火山方舟开通 AI_MODEL 对应模型，或核对模型 ID。"
+    if status == 429:
+        return "豆包调用次数或额度受限（429）：请稍后再试并检查配额。"
+    if status == 400:
+        return "豆包请求参数错误（400）：请核对模型与接口配置。"
+    return f"豆包接口返回 HTTP {status}"
+
+
 def analyze(text):
     """可选 OpenAI 兼容接口；未配置时明确返回模拟结果。"""
     key, url, model = (os.getenv(k, "") for k in ("AI_API_KEY", "AI_BASE_URL", "AI_MODEL"))
@@ -61,8 +87,11 @@ def analyze(text):
         endpoint = base if base.endswith("/chat/completions") else base + "/chat/completions"
         request = Request(endpoint, data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
-        with urlopen(request, timeout=25) as resp:
-            content = json.load(resp)["choices"][0]["message"]["content"]
+        try:
+            with urlopen(request, timeout=25) as resp:
+                content = json.load(resp)["choices"][0]["message"]["content"]
+        except HTTPError as exc:
+            raise ModelAPIError(explain_model_http_error(exc)) from None
         content = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.I).strip()
         result = json.loads(content)
         if not isinstance(result, dict) or not all(k in result and isinstance(result[k], str) for k in ("tag", "cause", "explanation", "variant", "answer")):
