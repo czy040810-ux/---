@@ -8,6 +8,7 @@ import qrcode
 import requests
 import streamlit as st
 from streamlit_cookies_controller import CookieController
+from batch_import import extract_candidates, MAX_FILES
 
 API = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 st.set_page_config(page_title="拾题 · 校园复习", page_icon="📚", layout="wide")
@@ -161,7 +162,7 @@ if "token" not in st.session_state:
 with st.sidebar:
     st.markdown("### 📘 拾题空间")
     st.caption("错题积累 · 智能解析 · 复习巩固")
-    page = st.radio("学习导航", ["学习概览", "拍照录题", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
+    page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
     if st.button("退出登录"):
         remember = cookie_controller.get(COOKIE_NAME)
         call("POST", "/logout", json={"remember_token": remember or ""})
@@ -232,6 +233,110 @@ elif page == "拍照录题":
                 st.write("变式题：", result["variant"], "\n\n参考答案：", result["answer"])
                 st.session_state.pop("ocr_text", None)
                 st.session_state.pop("image", None)
+
+
+elif page == "批量导入":
+    st.markdown("""<div class="sea-hero"><div class="eyebrow">BATCH QUESTION IMPORT</div>
+    <h2>一批录入，逐题掌握</h2>
+    <p>上传 PDF、Word 或多张题目照片，先检查识别结果，再统一分析并加入复习计划。</p></div>""", unsafe_allow_html=True)
+    st.subheader("① 上传学习资料")
+    st.caption("支持 PDF（含扫描件，最多15页）、Word .docx、PNG/JPG；一次最多10个文件，每个不超过12MB。旧版 .doc 请先另存为 .docx。")
+    batch_files = st.file_uploader(
+        "拖入文件或点击选择（支持多选）",
+        type=["pdf", "docx", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="batch_files",
+    )
+    if st.button("提取并拆分题目", type="primary", use_container_width=True,
+                 disabled=not bool(batch_files)):
+        if len(batch_files) > MAX_FILES:
+            st.error(f"一次最多选择 {MAX_FILES} 个文件。")
+        else:
+            with st.spinner("正在识别资料，扫描件和图片可能需要稍等片刻……"):
+                entries, warnings = extract_candidates([(f.name, f.getvalue()) for f in batch_files])
+            st.session_state.batch_entries = entries
+            st.session_state.batch_warnings = warnings
+            st.session_state.batch_saved_indices = set()
+            # 使用新的预览版本号避免上一次文件的文本残留。
+            st.session_state.batch_version = st.session_state.get("batch_version", 0) + 1
+    for warning in st.session_state.get("batch_warnings", []):
+        st.warning(warning)
+
+    entries = st.session_state.get("batch_entries", [])
+    if entries:
+        st.subheader("② 校对并选择错题")
+        st.info(f"已提取 {len(entries)} 个候选题。请逐题检查文字与题目边界；未编号的内容可能被识别为一整题。每次最多分析 8 题。")
+        version = st.session_state.get("batch_version", 0)
+        saved_indices = st.session_state.get("batch_saved_indices", set())
+        with st.form(f"batch_review_{version}"):
+            common_tag = st.text_input("本批知识点（可留“待归类”，由模型识别）", value="待归类")
+            for index, entry in enumerate(entries):
+                with st.expander(f"{'✅ 已导入' if index in saved_indices else '📝 待导入'} · {index + 1}. {entry['source']} · {entry['text'][:30]}", expanded=index < 3):
+                    st.checkbox("选择此题", value=index not in saved_indices,
+                                disabled=index in saved_indices, key=f"batch_select_{version}_{index}")
+                    st.text_area("核对或修改题干（包含选项）", value=entry["text"],
+                                 height=150, disabled=index in saved_indices,
+                                 key=f"batch_question_{version}_{index}")
+                    st.caption("来源：" + entry["source"])
+            submitted = st.form_submit_button("导入选中错题并进行豆包分析", type="primary",
+                                               use_container_width=True)
+        if submitted:
+            chosen = [
+                (index, st.session_state[f"batch_question_{version}_{index}"].strip())
+                for index in range(len(entries))
+                if index not in saved_indices and st.session_state.get(f"batch_select_{version}_{index}", False)
+            ]
+            if not chosen:
+                st.warning("请先选择尚未导入的题目。")
+            elif len(chosen) > 8:
+                st.warning("每次最多分析 8 题，请减少勾选数量后重试，避免等待过久。")
+            elif any(len(value) < 5 for _, value in chosen):
+                st.warning("有题目文字少于5个字符，请先补全后再保存。")
+            else:
+                existing = call("GET", "/questions")
+                if existing is not None:
+                    normalized = lambda value: "".join(value.split()).lower()
+                    seen = {normalized(item["text"]) for item in existing}
+                    progress = st.progress(0, text="准备导入……")
+                    succeeded, duplicate, failed = 0, 0, 0
+                    for position, (index, question_text) in enumerate(chosen, start=1):
+                        if normalized(question_text) in seen:
+                            duplicate += 1
+                            saved_indices.add(index)
+                        else:
+                            result = call("POST", "/questions", json={
+                                "text": question_text,
+                                "tag": common_tag.strip() or "待归类",
+                                "source": "批量导入 · " + entries[index]["source"],
+                                "image": "",
+                            })
+                            if result:
+                                succeeded += 1
+                                saved_indices.add(index)
+                                seen.add(normalized(question_text))
+                            else:
+                                failed += 1
+                        progress.progress(position / len(chosen), text=f"已处理 {position}/{len(chosen)} 题")
+                    st.session_state.batch_saved_indices = saved_indices
+                    if succeeded:
+                        st.success(f"成功导入并分析 {succeeded} 题，已加入“我的错题”和复习计划。")
+                    if duplicate:
+                        st.info(f"跳过 {duplicate} 道已有的同文题目。")
+                    if failed:
+                        st.warning(f"{failed} 道题未导入，可检查模型服务后重新提交。")
+                    st.rerun() if succeeded or duplicate else None
+        if saved_indices:
+            a, b = st.columns(2)
+            with a:
+                if st.button("查看我的错题", use_container_width=True):
+                    st.session_state.nav_page = "我的错题"
+                    st.rerun()
+            with b:
+                if st.button("查看今日复习", use_container_width=True):
+                    st.session_state.nav_page = "今日复习"
+                    st.rerun()
+    else:
+        st.caption("选择文件后点击“提取并拆分题目”，识别结果不会直接写入错题库。")
 
 elif page in ("我的错题", "今日复习"):
     items = call("GET", "/questions") or []
