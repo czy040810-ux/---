@@ -70,6 +70,12 @@ def restore_login_if_available():
     if st.session_state.get("token"):
         return
     remember = cookie_controller.get(COOKIE_NAME)
+    # 首次加载组件可能还未返回 Cookie，尝试使用请求携带的同源 Cookie。
+    if not remember:
+        try:
+            remember = st.context.cookies.get(COOKIE_NAME)
+        except (AttributeError, RuntimeError):
+            remember = None
     if not remember or not isinstance(remember, str):
         return
     try:
@@ -149,7 +155,15 @@ if "token" not in st.session_state:
                     st.session_state.token, st.session_state.role = result["token"], result["role"]
                     if remember_device and result.get("remember_token"):
                         persist_remember_token(result["remember_token"])
-                    st.rerun()
+                        # Cookie 写入依赖浏览器组件渲染，不能立刻重跑。
+                        st.session_state["login_ready"] = True
+                    else:
+                        st.rerun()
+        if st.session_state.get("login_ready"):
+            st.success("登录成功，已申请在这台设备保留登录状态。")
+            if st.button("进入拾题空间", type="primary", use_container_width=True):
+                st.session_state.pop("login_ready", None)
+                st.rerun()
     with register_tab:
         with st.form("register"):
             name = st.text_input("新用户名")
