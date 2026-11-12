@@ -19,6 +19,7 @@ COPY requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 COPY backend ./backend
 COPY frontend.py ./frontend.py
+COPY batch_import.py ./batch_import.py
 COPY start.sh ./start.sh
 RUN chmod +x /app/start.sh && mkdir -p /app/data && chown -R 10001:10001 /app
 
