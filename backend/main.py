@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from .services import ModelAPIError, analyze, copyright_check, next_review, now, ocr_image
+from .billing import init_billing, status as billing_status, reserve as billing_reserve, complete as billing_complete, refund as billing_refund, CreditExhausted
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.getenv("DATA_DIR", str(ROOT / "data"))).resolve()
@@ -31,6 +32,8 @@ def health():
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+# 商户支付未开通前维持旧功能；开通验签回调后才开启扣费。
+BILLING_ENABLED = os.getenv("BILLING_ENABLED", "false").lower() == "true"
 # 云端优先 PostgreSQL；本地开发仍可以使用 SQLite。
 class PgConnection:
     def __init__(self, conn):
@@ -103,6 +106,7 @@ def init():
             CREATE TABLE IF NOT EXISTS remembered_devices(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS questions(id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, text TEXT NOT NULL, image TEXT, tag TEXT NOT NULL DEFAULT '待归类', cause TEXT DEFAULT '', explanation TEXT DEFAULT '', variant TEXT DEFAULT '', answer TEXT DEFAULT '', mode TEXT DEFAULT '', level INTEGER DEFAULT 0, due TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'private', source TEXT DEFAULT '', review_note TEXT DEFAULT '', created TEXT NOT NULL);
             """)
+        init_billing(c, bool(DATABASE_URL))
         username, password = os.getenv("ADMIN_USER"), os.getenv("ADMIN_PASSWORD")
         if username and password and len(password) >= 8:
             hashed = password_hash(password)
@@ -245,23 +249,42 @@ async def ocr(file: UploadFile = File(...), user=Depends(current)):
         return {"text": "", "image": name, "ocr_ok": False, "hint": "本机OCR不可用，请手动填写识别文本"}
 
 
+@app.get("/billing")
+def my_billing(user=Depends(current)):
+    with db() as c:
+        return billing_status(c, user["id"], BILLING_ENABLED)
+
+
 @app.post("/questions")
 def create(body: Question, user=Depends(current)):
     # 图片名受控且只允许本站生成的随机文件名。
     import re
     if body.image and (not re.fullmatch(r"[0-9a-f]{32}\.png", body.image) or not (UPLOADS / body.image).exists()):
         raise HTTPException(400, "图片标识无效")
+    reservation_id = None
+    if BILLING_ENABLED:
+        try:
+            with db() as c:
+                reservation_id = billing_reserve(c, user["id"], bool(DATABASE_URL))
+        except CreditExhausted as exc:
+            raise HTTPException(402, str(exc))
     try:
         result = analyze(body.text)
-    except ModelAPIError as e:
-        raise HTTPException(502, str(e))
-    except Exception as e:
-        raise HTTPException(502, f"模型调用失败，请检查配置：{type(e).__name__}")
-    with db() as c:
-        insert_sql = "INSERT INTO questions(owner_id,text,image,tag,cause,explanation,variant,answer,mode,due,source,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)" + (" RETURNING id" if DATABASE_URL else "")
-        cursor = c.execute(insert_sql,
-                           (user["id"], body.text, body.image, body.tag if body.tag != "待归类" else result["tag"], result["cause"], result["explanation"], result["variant"], result["answer"], result["mode"], now().isoformat(), body.source, now().isoformat()))
-        return {"id": cursor.fetchone()["id"] if DATABASE_URL else cursor.lastrowid, **result}
+        with db() as c:
+            insert_sql = "INSERT INTO questions(owner_id,text,image,tag,cause,explanation,variant,answer,mode,due,source,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)" + (" RETURNING id" if DATABASE_URL else "")
+            cursor = c.execute(insert_sql,
+                               (user["id"], body.text, body.image, body.tag if body.tag != "待归类" else result["tag"], result["cause"], result["explanation"], result["variant"], result["answer"], result["mode"], now().isoformat(), body.source, now().isoformat()))
+            question_id = cursor.fetchone()["id"] if DATABASE_URL else cursor.lastrowid
+            if reservation_id:
+                billing_complete(c, reservation_id)
+        return {"id": question_id, **result}
+    except Exception as exc:
+        if reservation_id:
+            with db() as c:
+                billing_refund(c, reservation_id)
+        if isinstance(exc, ModelAPIError):
+            raise HTTPException(502, str(exc))
+        raise HTTPException(502, f"分析或保存失败：{type(exc).__name__}")
 
 
 @app.get("/questions")
