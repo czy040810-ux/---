@@ -176,7 +176,7 @@ if "token" not in st.session_state:
 with st.sidebar:
     st.markdown("### 📘 拾题空间")
     st.caption("错题积累 · 智能解析 · 复习巩固")
-    page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "学习通导入", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
+    page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "学习通导入", "积分中心", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
     if st.button("退出登录"):
         remember = cookie_controller.get(COOKIE_NAME)
         call("POST", "/logout", json={"remember_token": remember or ""})
@@ -248,6 +248,31 @@ elif page == "拍照录题":
                 st.session_state.pop("ocr_text", None)
                 st.session_state.pop("image", None)
 
+
+elif page == "积分中心":
+    st.markdown("""<div class="sea-hero"><div class="eyebrow">CREDIT CENTER</div>
+    <h2>拾题积分中心</h2>
+    <p>记录试用额度和积分余额。每成功分析并保存一道新错题，消耗 1 积分；查看已保存解析与复习不再扣费。</p></div>""", unsafe_allow_html=True)
+    wallet = call("GET", "/billing")
+    if wallet:
+        a, b, c = st.columns(3)
+        a.metric("免费试用剩余", f"{wallet['trial_questions_left']} 题")
+        b.metric("试用时间剩余", f"{wallet['trial_days_left']:.1f} 天")
+        c.metric("积分余额", f"{wallet['credits']} 分")
+        if not wallet["billing_enabled"]:
+            st.info("当前为内测阶段，暂不扣积分。正式支付功能开通后，将执行 3 天内最多免费分析 10 道题的规则。")
+        st.subheader("充值积分")
+        st.caption("套餐金额即最终应付金额，1 积分可分析 1 道题。")
+        columns = st.columns(2)
+        for i, plan in enumerate(wallet["plans"]):
+            with columns[i % 2]:
+                with st.container(border=True):
+                    st.markdown(f"#### {plan['name']}")
+                    st.markdown(f"### ¥{plan['amount_fen'] / 100:.2f}")
+                    st.write(f"可获得 **{plan['credits']} 积分**")
+                    st.button("支付渠道开通后可购买", key=f"buy_{plan['id']}",
+                              disabled=True, use_container_width=True)
+        st.caption("充值支付尚未开通：需先申请微信支付或支付宝商户资质。未完成支付的订单不会发放积分。")
 
 elif page in ("批量导入", "学习通导入"):
     from_xxt = page == "学习通导入"
