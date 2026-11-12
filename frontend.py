@@ -1,12 +1,13 @@
 """Streamlit 界面：PC/手机浏览器均可访问。"""
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
 import qrcode
 import requests
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 
 API = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 st.set_page_config(page_title="拾题 · 校园复习", page_icon="📚", layout="wide")
@@ -50,12 +51,58 @@ input,textarea{border-radius:10px!important}
 @media(max-width:700px){.block-container{padding:1.15rem .85rem 3.5rem}.sea-hero{padding:22px 20px;border-radius:16px}.sea-hero h2{font-size:1.4rem!important}.metric-tile{min-height:100px;padding:13px}.metric-tile .num{font-size:1.4rem}h1{font-size:1.65rem!important}input,textarea{font-size:16px!important}.feature-tile{min-height:auto}}
 </style>""", unsafe_allow_html=True)
 
+# 同一设备 14 天记住登录。凭证是随机串，服务端仅保存哈希。
+COOKIE_NAME = "shiti_remember_v1"
+cookie_controller = CookieController()
+
+
+def persist_remember_token(token):
+    cookie_controller.set(
+        COOKIE_NAME, token, path="/",
+        expires=datetime.now(timezone.utc) + timedelta(days=14),
+        secure=bool(os.getenv("RENDER_EXTERNAL_URL")),
+        same_site="strict",
+    )
+
+
+def restore_login_if_available():
+    if st.session_state.get("token"):
+        return
+    remember = cookie_controller.get(COOKIE_NAME)
+    if not remember or not isinstance(remember, str):
+        return
+    try:
+        response = requests.post(API + "/session/restore", json={"remember_token": remember}, timeout=15)
+        if response.ok:
+            restored = response.json()
+            st.session_state.token = restored["token"]
+            st.session_state.role = restored["role"]
+        elif response.status_code in (400, 401, 403):
+            cookie_controller.remove(COOKIE_NAME)
+    except requests.RequestException:
+        # 网络暂时不可用时保留浏览器凭证，稍后重试。
+        pass
+
+
+restore_login_if_available()
+
 
 def call(method, route, **kwargs):
     """统一请求：服务端请求本机 FastAPI，不要求手机能访问8000端口。"""
     headers = {"Authorization": "Bearer " + st.session_state.get("token", "")}
     try:
         response = requests.request(method, API + route, headers=headers, timeout=35, **kwargs)
+        if response.status_code == 401 and route not in ("/login", "/session/restore"):
+            remember = cookie_controller.get(COOKIE_NAME)
+            if isinstance(remember, str) and remember:
+                renewed = requests.post(API + "/session/restore",
+                                        json={"remember_token": remember}, timeout=15)
+                if renewed.ok:
+                    session = renewed.json()
+                    st.session_state.token = session["token"]
+                    st.session_state.role = session["role"]
+                    headers["Authorization"] = "Bearer " + session["token"]
+                    response = requests.request(method, API + route, headers=headers, timeout=35, **kwargs)
         if response.status_code >= 400:
             st.error(response.json().get("detail", "请求失败"))
             return None
@@ -86,15 +133,21 @@ def show_qr():
 if "token" not in st.session_state:
     with st.expander("📱 课堂扫码进入（老师投屏）"):
         show_qr()
+    st.info("第一次扫码进入后，可把本页收藏或添加到手机主屏幕。以后点击图标即可打开。")
     login_tab, register_tab = st.tabs(["登录", "注册"])
     with login_tab:
         with st.form("login"):
             name = st.text_input("用户名")
             password = st.text_input("密码", type="password")
+            remember_device = st.checkbox("在这台设备保持登录（14 天）", value=True,
+                                          help="仅在自己的手机或电脑上勾选；公共设备请取消勾选。")
             if st.form_submit_button("登录", use_container_width=True):
-                result = call("POST", "/login", json={"username": name, "password": password})
+                result = call("POST", "/login", json={"username": name, "password": password,
+                                                           "remember_device": remember_device})
                 if result:
                     st.session_state.token, st.session_state.role = result["token"], result["role"]
+                    if remember_device and result.get("remember_token"):
+                        persist_remember_token(result["remember_token"])
                     st.rerun()
     with register_tab:
         with st.form("register"):
@@ -110,7 +163,9 @@ with st.sidebar:
     st.caption("错题积累 · 智能解析 · 复习巩固")
     page = st.radio("学习导航", ["学习概览", "拍照录题", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
     if st.button("退出登录"):
-        call("POST", "/logout")
+        remember = cookie_controller.get(COOKIE_NAME)
+        call("POST", "/logout", json={"remember_token": remember or ""})
+        cookie_controller.remove(COOKIE_NAME)
         st.session_state.clear()
         st.rerun()
 
@@ -243,7 +298,9 @@ elif page == "管理员审核":
                             st.rerun()
 
 elif page == "扫码访问":
-    st.subheader("用手机扫码体验")
+    st.subheader("手机快捷入口")
+    st.info("建议首次扫码后把拾题添加到桌面：iPhone Safari 选择“分享 → 添加到主屏幕”；Android Chrome 选择“菜单 → 添加到主屏幕”。下次直接点击图标即可。")
+    st.caption("也可以直接收藏网址。更换设备时需重新登录；公共设备不要启用记住登录。")
     st.write("公网部署后，手机使用微信或其他浏览器扫码即可访问，无需连接同一 Wi-Fi。")
     public_file = Path(__file__).resolve().parent / "data" / "public_url.txt"
     address = public_file.read_text(encoding="utf-8").strip() if public_file.exists() else (os.getenv("RENDER_EXTERNAL_URL") or os.getenv("DEMO_URL", ""))
