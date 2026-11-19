@@ -57,19 +57,40 @@ COOKIE_NAME = "shiti_remember_v1"
 cookie_controller = CookieController()
 
 
+def safe_cookie_get(name):
+    """Cookie 组件在微信等内置浏览器首屏尚未就绪时可能返回 None。"""
+    try:
+        return cookie_controller.get(name)
+    except (TypeError, AttributeError, KeyError, RuntimeError):
+        return None
+
+
+def safe_cookie_remove(name):
+    try:
+        cookie_controller.remove(name)
+    except (TypeError, AttributeError, KeyError, RuntimeError):
+        # Cookie 初始化失败不应阻断登出和常规账号操作。
+        pass
+
+
 def persist_remember_token(token):
-    cookie_controller.set(
-        COOKIE_NAME, token, path="/",
-        expires=datetime.now(timezone.utc) + timedelta(days=14),
-        secure=bool(os.getenv("RENDER_EXTERNAL_URL")),
-        same_site="strict",
-    )
+    try:
+        cookie_controller.set(
+            COOKIE_NAME, token, path="/",
+            expires=datetime.now(timezone.utc) + timedelta(days=14),
+            secure=bool(os.getenv("RENDER_EXTERNAL_URL")),
+            same_site="strict",
+        )
+        return True
+    except (TypeError, AttributeError, KeyError, RuntimeError):
+        # 不影响已经成功的登录；该浏览器仅无法启用免登录。
+        return False
 
 
 def restore_login_if_available():
     if st.session_state.get("token"):
         return
-    remember = cookie_controller.get(COOKIE_NAME)
+    remember = safe_cookie_get(COOKIE_NAME)
     # 首次加载组件可能还未返回 Cookie，尝试使用请求携带的同源 Cookie。
     if not remember:
         try:
@@ -85,7 +106,7 @@ def restore_login_if_available():
             st.session_state.token = restored["token"]
             st.session_state.role = restored["role"]
         elif response.status_code in (400, 401, 403):
-            cookie_controller.remove(COOKIE_NAME)
+            safe_cookie_remove(COOKIE_NAME)
     except requests.RequestException:
         # 网络暂时不可用时保留浏览器凭证，稍后重试。
         pass
@@ -100,7 +121,7 @@ def call(method, route, **kwargs):
     try:
         response = requests.request(method, API + route, headers=headers, timeout=35, **kwargs)
         if response.status_code == 401 and route not in ("/login", "/session/restore"):
-            remember = cookie_controller.get(COOKIE_NAME)
+            remember = safe_cookie_get(COOKIE_NAME)
             if isinstance(remember, str) and remember:
                 renewed = requests.post(API + "/session/restore",
                                         json={"remember_token": remember}, timeout=15)
@@ -178,9 +199,9 @@ with st.sidebar:
     st.caption("错题积累 · 智能解析 · 复习巩固")
     page = st.radio("学习导航", ["学习概览", "拍照录题", "批量导入", "学习通导入", "积分中心", "我的错题", "今日复习", "公开题库"] + (["管理员审核"] if st.session_state.get("role") == "admin" else []) + ["扫码访问"], key="nav_page")
     if st.button("退出登录"):
-        remember = cookie_controller.get(COOKIE_NAME)
+        remember = safe_cookie_get(COOKIE_NAME)
         call("POST", "/logout", json={"remember_token": remember or ""})
-        cookie_controller.remove(COOKIE_NAME)
+        safe_cookie_remove(COOKIE_NAME)
         st.session_state.clear()
         st.rerun()
 
