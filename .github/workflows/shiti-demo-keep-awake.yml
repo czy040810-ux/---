@@ -18,8 +18,8 @@ jobs:
         id: window
         shell: bash
         run: |
-          # Stop making requests after 2026-11-13 23:59 Asia/Shanghai.
-          if [ "$(date -u +%s)" -ge "$(date -u -d '2026-11-13 16:00:00 UTC' +%s)" ]; then
+          # Stop making requests after 2026-11-20 23:59 Asia/Shanghai.
+          if [ "$(date -u +%s)" -ge "$(date -u -d '2026-11-20 16:00:00 UTC' +%s)" ]; then
             echo "active=false" >> "$GITHUB_OUTPUT"
             echo "Demo window ended; no further requests."
           else
@@ -34,5 +34,5 @@ jobs:
             --connect-timeout 15 --max-time 100 \
             --retry 1 --retry-delay 5 \
             --output /dev/null \
-            --write-out 'Shiti status: HTTP %{http_code}, time: %{time_total}s\\n' \
+            --write-out 'Shiti status: HTTP %{http_code}, time: %{time_total}s\n' \
             'https://shiti-review.onrender.com/'
